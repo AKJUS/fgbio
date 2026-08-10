@@ -12,8 +12,8 @@
 
 | Field | Current Value |
 |-------|---------------|
-| **Next Release Version** | 4.0.1 |
-| **Last Release** | 4.0.0 (March 30, 2026) |
+| **Next Release Version** | 4.1.2 |
+| **Last Release** | 4.1.1 (August 10, 2026) |
 | **Version File** | `version.sbt` |
 
 ---
@@ -167,6 +167,8 @@ git push -f origin main && git push origin X.Y.Z
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 4.1.1 | 2026-08-10 | Deterministic consensus read downsampling, fork-PR docs job fix |
+| 4.1.0 | 2026-05-20 | htsjdk 5.0.0, libdeflate, non-terminal `+` in read structures, CODEC dovetail fix |
 | 4.0.0 | 2026-03-30 | Java 17 minimum, htsjdk 4.2.0, Scala 2.13.16 |
 | 3.1.2 | 2026-03-06 | Cell barcode sort support, clip overlapping reads fix, consensus stats fix |
 | 3.1.1 | 2025-12-15 | CRAM support, consensus caller fixes, UMI assigner determinism |
@@ -178,6 +180,16 @@ git push -f origin main && git push origin X.Y.Z
 
 ## Learnings & Notes
 
-- **Force push required**: Branch protection on `main` requires `-f` flag for direct pushes during releases
+- **Force push required**: Branch protection on `main` requires `-f` flag for direct pushes during releases. The push output still prints `Changes must be made through a pull request` — that is the rejection being overridden, not a failure; confirm the ref actually moved.
 - **Step-by-step confirmation**: When using AI assistance, confirm each action before execution to maintain control
 - **Version already set**: The `_version` in `version.sbt` is typically pre-set to the next release version after each release
+- **Don't skip Steps 4–7**: The 4.1.0 release skipped them, leaving `version.sbt` in *release* mode on `main` for ~3 months (so main built as a plain `4.1.0`, colliding with the published artifact) and this guide stale by two releases. Verify `version.sbt` is back in snapshot mode before calling a release done.
+- **Where the secrets actually live**: `SONATYPE_USER`/`SONATYPE_PASS` are on the repo's `github-actions` **environment**; `PGP_SECRET`/`PGP_PASSPHRASE` are **org-level** (`fulcrumgenomics`, scoped to selected repos). Precedence is environment > repo > org, so the environment copies of the Sonatype pair are what the job receives. List them with `gh secret list --env github-actions` and `gh secret list --org fulcrumgenomics`.
+- **Checking GPG expiry without the key locally**: the signing key is not in any local keyring, so recover its ID from a published signature and look it up on a keyserver:
+  ```bash
+  curl -sO https://repo1.maven.org/maven2/com/fulcrumgenomics/fgbio_2.13/<last-version>/fgbio_2.13-<last-version>.pom.asc
+  gpg --list-packets fgbio_2.13-<last-version>.pom.asc     # → keyid
+  curl -sS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x<fingerprint>" | gpg --show-keys
+  ```
+  Current key: `74317092BC7A3C35` (ed25519, Nils Homer), **expires 2028-03-18**. It is published on `keyserver.ubuntu.com` but *not* `keys.openpgp.org` — check that first if Sonatype ever rejects a signature.
+- **Timing**: 4.1.1 took ~15 min for the whole workflow (test matrix ~3.5 min per JDK, then publish). Maven Central sync was near-immediate, well under the ~30 min the guide suggests.
