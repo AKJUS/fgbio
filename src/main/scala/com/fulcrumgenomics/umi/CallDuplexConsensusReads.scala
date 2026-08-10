@@ -115,8 +115,9 @@ class CallDuplexConsensusReads
  @arg(flag='S', doc="The sort order of the output, the same as the input if not given.") val sortOrder: Option[SamOrder] = None,
  @arg(flag='M', minElements=1, maxElements=3, doc="The minimum number of input reads to a consensus read.") val minReads: Seq[Int] = Seq(1),
  @arg(doc="""
-            |The maximum number of reads to use when building a single-strand consensus. If more than this many reads are
-            |present in a tag family, the family is randomly downsampled to exactly max-reads reads.
+            |The maximum number of reads to use when building a single-strand consensus. If more than this many reads
+            |are present for a strand, that strand is randomly but deterministically downsampled to exactly
+            |max-reads-per-strand reads; the same reads are selected on every run and for any number of threads.
           """)
  val maxReadsPerStrand: Option[Int] = None,
  @arg(flag='c', doc="Tag containing the cell barcode.") val cellTag: Option[String] = Some(SAMTag.CB.name),
@@ -130,6 +131,7 @@ class CallDuplexConsensusReads
   stats.foreach(Io.assertCanWriteFile(_))
   validate(errorRatePreUmi  > 0, "Phred-scaled error rate pre UMI must be > 0")
   validate(errorRatePostUmi > 0, "Phred-scaled error rate post UMI must be > 0")
+  validate(maxReadsPerStrand.forall(_ >= 1), "--max-reads-per-strand must be >= 1.")
 
   override def execute(): Unit = {
     val in = SamSource(input)

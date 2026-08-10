@@ -24,7 +24,9 @@
 
 package com.fulcrumgenomics.umi
 
-import com.fulcrumgenomics.bam.api.{SamOrder, SamSource}
+import com.fulcrumgenomics.FgBioDef._
+import com.fulcrumgenomics.bam.api.{SamOrder, SamRecord, SamSource}
+import com.fulcrumgenomics.sopt.cmdline.ValidationException
 import com.fulcrumgenomics.testing.SamBuilder.{Minus, Plus}
 import com.fulcrumgenomics.testing.{SamBuilder, UnitSpec}
 
@@ -53,6 +55,16 @@ class CallDuplexConsensusReadsTest extends UnitSpec {
       val out = makeTempFile("out.", ".bam")
     an[Exception] should be thrownBy { new CallDuplexConsensusReads(input=in, output=out, errorRatePreUmi=0.toByte).execute() }
     an[Exception] should be thrownBy { new CallDuplexConsensusReads(input=in, output=out, errorRatePostUmi=0.toByte).execute() }
+  }
+
+  it should "throw a validation exception if --max-reads-per-strand is less than one" in {
+    val in  = makeTempFile("in.", ".bam")
+    val out = makeTempFile("out.", ".bam")
+    // Validation happens at construction, so this fails only when the validation exists - not because the
+    // empty input file is unreadable.
+    an[ValidationException] should be thrownBy { new CallDuplexConsensusReads(input=in, output=out, maxReadsPerStrand=Some(0)) }
+    an[ValidationException] should be thrownBy { new CallDuplexConsensusReads(input=in, output=out, maxReadsPerStrand=Some(-1)) }
+    noException should be thrownBy { new CallDuplexConsensusReads(input=in, output=out, maxReadsPerStrand=Some(1)) }
   }
 
   it should "have working CLP and arg annotations" in {
@@ -131,5 +143,47 @@ class CallDuplexConsensusReadsTest extends UnitSpec {
         rec[String](specialCellTag) shouldBe "AB"
       }
     }
+  }
+
+  it should "produce identical output with one thread and with many when downsampling strands" in {
+    val readLength     = 10
+    val readsPerStrand = 6
+    val maxPerStrand   = 3
+
+    // Build many molecules, each with more reads per strand than we'll allow, and with a mismatching base at a
+    // different offset in each read so that which reads are retained is visible in the consensus.  The molecule
+    // count exceeds ConsensusCallingIterator's chunk size (threads * 16) so the input spans several chunks rather
+    // than relying on the fork-join pool to split a single chunk across threads.
+    val builder = new SamBuilder(readLength=readLength, sort=Some(SamOrder.TemplateCoordinate))
+    Range.inclusive(1, 300).foreach { mi =>
+      Range.inclusive(1, readsPerStrand).foreach { i =>
+        val bases = ("A" * readLength).updated(i, 'C')
+        builder.addPair(name=f"ab$mi%03d:$i", start1=100, start2=100, attrs=Map(MI -> s"$mi/A"),
+          bases1=bases, bases2=bases)
+        builder.addPair(name=f"ba$mi%03d:$i", start1=100, start2=100, strand1=Minus, strand2=Plus,
+          attrs=Map(MI -> s"$mi/B"), bases1=bases, bases2=bases)
+      }
+    }
+    val in = builder.toTempFile()
+
+    /** Calls duplex consensus reads with the given number of threads and returns the output records. */
+    def callWithThreads(threads: Int): Seq[SamRecord] = {
+      val out = makeTempFile("duplex.", ".bam")
+      new CallDuplexConsensusReads(input=in, output=out, maxReadsPerStrand=Some(maxPerStrand), threads=threads).execute()
+      val source = SamSource(out)
+      yieldAndThen(source.toIndexedSeq) { source.safelyClose() }
+    }
+
+    val singleThreaded = callWithThreads(threads=1)
+    val multiThreaded  = callWithThreads(threads=8)
+
+    // Sanity check that the strands really were downsampled, otherwise there's nothing to be non-deterministic about
+    singleThreaded should have size 600
+    singleThreaded.foreach { rec =>
+      rec[Int](ConsensusTags.PerRead.AbRawReadCount) shouldBe maxPerStrand
+      rec[Int](ConsensusTags.PerRead.BaRawReadCount) shouldBe maxPerStrand
+    }
+
+    multiThreaded.map(_.asSam.getSAMString) should contain theSameElementsInOrderAs singleThreaded.map(_.asSam.getSAMString)
   }
 }
